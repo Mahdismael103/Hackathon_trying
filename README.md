@@ -95,14 +95,14 @@ uses common key names (`column_types`, `missing_values`, `class_distribution`, `
 
 ```bash
 python tools/smoke_test.py           # ~30 s: one dataset per task, checks outputs, quality and time
-python -m pip install -r requirements-dev.txt && python -m pytest tests -q   # 26 tests (~1-4 min)
+python -m pip install -r requirements-dev.txt && python -m pytest tests -q   # 27 tests (~2-4 min)
 python tools/make_practice_data.py   # 40 practice datasets in practice/ (+ hidden labels in practice_solutions/)
 python tools/check.py                # runs main.py on each like the assessment agent; times and scores it
 python tools/check.py --only clustering --tag mytest      # one task family, results saved to outputs/
 python tools/stress_test.py          # edge cases: 100k rows, wide tables, text, rare classes, odd metadata...
 python tools/stress_test2.py         # messy encodings: "?" markers, bool / text targets, tz dates, unseen categories...
 python tools/stress_test3.py         # size limits: 1,000 columns, 20 classes, 300,000 rows, 80-column house prices...
-python tools/judge_sim.py            # simulated assessment: 18 unseen datasets, 60 s kill, scored with the brief's weights
+python tools/judge_sim.py --seed 1100000   # simulated assessment: 18 unseen datasets, 60 s kill, brief's weights
 ```
 
 Mean test-set quality over the 40 labelled practice datasets (mean time per dataset 13 / 15 / 6 s for
@@ -112,9 +112,9 @@ on an i7-12700H laptop; times include the ~4 s Python start-up.
 | Task (datasets) | Metric | Version 1 | **This version** |
 |---|---|---|---|
 | Classification (10) | macro-F1 | 0.878 | **0.888** |
-| Regression (9) | R² | 0.833 | **0.866** |
-| Clustering (21) | ARI | 0.773 | **0.937** |
-| Slowest dataset | seconds | 44.5 | **27** |
+| Regression (9) | R² | 0.833 | **0.873** |
+| Clustering (21) | ARI | 0.773 | **0.938** |
+| Slowest dataset | seconds | 44.5 | **27** (43 with the laptop under heavy load) |
 
 Largest gains: iris clustering 0.62 → 0.90, anisotropic clusters 0.61 → 1.00, mall customers with
 noise columns 0.66 → 0.99, high-cardinality regression R² 0.76 → 0.94, digits classification
@@ -129,16 +129,22 @@ virtual environment passes the smoke test.
 
 ### Simulated assessment (`tools/judge_sim.py`)
 
-18 datasets never seen during development (6 per task, Kaggle-style plus the brief's variations injected
-with known answers), each run through `main.py` as a separate process with a hard kill at 60 s. A second,
-**held-out** set of 18 (`--seed 950000`) was only measured before and after the last round of changes:
+Five independent experiments, each with 18 datasets never seen during development (6 per task,
+Kaggle-style, with the brief's variations injected so the correct profile answers are known). Every dataset
+runs through `main.py` as a separate process with a hard kill at 60 s, like an assessment agent would.
 
-| | Development set | Held-out set |
-|---|---|---|
-| Valid outputs / killed at 60 s | 18/18 / 0 | 18/18 / 0 |
-| Classification macro-F1 / regression R² / clustering ARI | 0.852 / 0.832 / 0.933 | 0.868 / 0.844 / 0.955 |
-| Profile variations reported correctly | 18/18 | 17/18 |
-| Score with the brief's weights (approximation; official formula unpublished) | **88.5/100** | **89.8/100** |
+| Experiment (seed) | Classification F1 | Regression R² | Clustering ARI | Failures / killed | Score (approx.) |
+|---|---|---|---|---|---|
+| 1 (1100000) | 0.862 | 0.869 | 0.793* | 0 / 0 | 85.1 |
+| 2 (1200000) | 0.854 | 0.851 | 0.962 | 0 / 0 | 89.4 |
+| 3 (1300000) | 0.858 | 0.848 | 0.963 | 0 / 0 | 89.4 |
+| 4 (1400000) | 0.862 | 0.865 | 0.967 | 0 / 0 | 90.2 |
+| 5 (1500000) | 0.863 | 0.848 | 0.928 | 0 / 0 | 88.6 |
+| **Average** | **0.860** | **0.856** | **0.923** | **0 / 0 (90 datasets)** | **88.5** |
+
+Score = quality 74.8/85 + profiling 9.9/10 + speed 3.8/5, using the brief's weights. The official formula is
+not published, so this is an approximation. \*Experiment 1 contains a generated dataset whose groups overlap
+completely (every clustering method scores ARI 0.004).
 
 ## Approach
 
