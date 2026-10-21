@@ -110,3 +110,17 @@ c._Method.fit_predict = lambda self, Z: time.sleep(300)
     assert secs < 35, proc.stderr[-2000:]
     labels = pd.read_csv(tmp_path / "out" / "predictions.csv")["prediction"]
     assert labels.nunique() == 3                               # quick k-means groups, not one cluster
+
+
+def test_shape_rule_switches_to_mixture_only_when_clusters_are_not_round(monkeypatch):
+    from sklearn.datasets import make_blobs
+    stretched, _ = make_blobs(600, 2, centers=3, random_state=170)
+    stretched = stretched @ np.array([[0.6, -0.64], [-0.41, 0.85]])
+    round_, _ = make_blobs(600, 2, centers=3, cluster_std=1.0, random_state=1)
+    # k-means most stable, mixture within the switch margin
+    fake = {"kmeans": 0.97, "gmm_full": 0.90, "gmm_bic": 0.95, "ward": 0.80, "spectral": 0.93}
+    monkeypatch.setattr(clu, "_stability", lambda m, Z, base, r, dl: fake[m.name])
+    res = clu.solve_clustering(stretched, 3, time.time() + 30, log=lambda *_: None)
+    assert res["report"]["chosen"] == "gmm_bic" and res["report"]["shape_override"]
+    res = clu.solve_clustering(round_, 3, time.time() + 30, log=lambda *_: None)
+    assert res["report"]["chosen"] == "kmeans" and not res["report"]["shape_override"]

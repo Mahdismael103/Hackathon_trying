@@ -39,6 +39,11 @@ STABILITY_FRAC = 0.8
 # 34-dataset benchmark (tools/clu_bench.py) it scored 0.914 mean ARI against 0.931 for the plain
 # rule (see EXPERIMENTS.md, round 2), so ties are now only exact ties.
 TIE_TOLERANCE = 0.0
+# Switch to the BIC-selected Gaussian mixture when BIC prefers non-round clusters by >= SHAPE_EVIDENCE_MIN
+# per row and its stability is within SHAPE_SWITCH_DELTA of the top (tools/clu_shape_rule.py: 34 tuning
+# datasets 0.931 -> 0.942; 12 unseen validation datasets 0.911 -> 0.929, none worse).
+SHAPE_SWITCH_DELTA = 0.08
+SHAPE_EVIDENCE_MIN = 0.2
 
 
 class _Method:
@@ -73,11 +78,14 @@ class _Method:
         if self.name == "gmm_bic":
             G = self._gmm_space(Z)
             best = None
+            self.bic_by_cov = {}
             for cov in ("full", "tied", "diag", "spherical"):
                 g = GaussianMixture(k, covariance_type=cov, n_init=2, reg_covar=self.reg, random_state=RS).fit(G)
                 b = g.bic(G)
+                self.bic_by_cov[cov] = float(b)
                 if best is None or b < best[0]:
                     best = (b, g)
+            self.bic_n = len(G)
             self.model = best[1]
             return self.model.predict(G)
         if self.name == "gmm_full":
@@ -140,6 +148,7 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
 
     names = ["kmeans", "gmm_full", "gmm_bic", "ward", "spectral"]
     labels, stab, secs = {}, {}, {}
+    shape_evidence, bic_shape = None, None
     for nm in names:
         if labels and time.time() > deadline - 3:
             break
@@ -154,6 +163,12 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
             log(f"  {nm} degenerate ({len(np.unique(lab))} groups)")
             continue
         labels[nm] = lab
+        if getattr(m, "bic_by_cov", None):
+            b = m.bic_by_cov
+            # per-row BIC advantage of the best non-spherical shape over spherical clusters (the k-means
+            # assumption); large values mean the data clearly contradicts round, equal-size clusters
+            shape_evidence = (b["spherical"] - min(b["full"], b["tied"], b["diag"])) / max(m.bic_n, 1)
+            bic_shape = min(b, key=b.get)
         stab[nm] = _stability(m, Z, lab, rng, deadline - 3)
         if len(np.unique(lab)) < k:
             stab[nm] -= 0.1  # did not use all requested groups
@@ -169,6 +184,13 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
     top = max(stab.values())
     near = [p for p in labels if stab[p] >= top - TIE_TOLERANCE]
     best = max(near, key=lambda p: cons[p])
+    shape_override = False
+    if (best != "gmm_bic" and "gmm_bic" in stab and shape_evidence is not None and bic_shape != "spherical"
+            and shape_evidence >= SHAPE_EVIDENCE_MIN and stab["gmm_bic"] >= top - SHAPE_SWITCH_DELTA):
+        # The most stable method may be stable *because* it consistently imposes round clusters
+        # (k-means, spectral) on elongated / overlapping ones. When BIC clearly rejects round clusters
+        # and the mixture is nearly as stable, the mixture's partition is the better-founded one.
+        best, shape_override = "gmm_bic", True
 
     # labels for every row
     if len(sample) == n:
@@ -186,11 +208,14 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
     remap[order] = np.arange(len(order))
     final = remap[final]
     report = {
-        "selection_criterion": "highest stability (subsample ARI); consensus breaks exact ties",
+        "selection_criterion": "highest stability (subsample ARI); BIC shape evidence can switch to gmm_bic",
         "chosen": best,
         "stability": {p: round(s, 5) for p, s in stab.items()},
         "consensus": {p: round(c, 5) for p, c in cons.items()},
         "near_ties": near,
+        "bic_shape": bic_shape,
+        "shape_override": shape_override,
+        "shape_evidence_per_row": None if shape_evidence is None else round(float(shape_evidence), 5),
         "selection_rows": int(len(sample)),
         "n_features_in_space": int(d),
         "cluster_sizes": np.bincount(final).tolist(),

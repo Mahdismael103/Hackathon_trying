@@ -122,3 +122,16 @@ in one set, 23 s in calmer runs), so speed points differ by up to 0.9 between ru
 **Remaining bottleneck**: clustering cases where a wrong partition is *stable* (iris + noise columns on seed
 970000: 0.54 while a 0.92 candidate exists). Neither stability nor held-out likelihood identifies it; every
 rule tried that fixes it loses more elsewhere.
+
+## Round 3: the iris + noise clustering failure
+
+| Step | Finding |
+|---|---|
+| Hypothesis 1: noise columns distort the groups | **Rejected by measurement.** With the 2 noise columns removed, seed 970000 still chose k-means (0.630) over the mixture (0.904), and seed 910000 got slightly worse (0.922 → 0.904) |
+| Root cause | Iris groups are elongated and overlap. k-means and spectral impose round clusters and find the *same* wrong split on every subsample, so they are *stable but wrong*; their stability (0.897–0.950) edges out the correct mixture (0.879–0.910) |
+| Fix | Use the mixture's own BIC comparison of cluster shapes: if BIC prefers non-round clusters by ≥ τ per row and the mixture's stability is within δ of the top, choose the mixture (`automl/clustering.py`) |
+| Tuning (`tools/clu_shape_rule.py`, 34 datasets) | Grid δ ∈ {0.03…0.15}, τ ∈ {0…0.5}: δ = 0.05 / 0.08 / 0.10 tie on tuning (0.9423 / 0.9422); chosen δ = 0.08 (middle of the tie), τ = 0.2 (more conservative, −0.0001) |
+| **Validation (12 unseen datasets, seeds 990000 / 1010000)** | **0.911 → 0.929; better on 2, worse on 0** |
+| Real pipeline (`tools/clu_bench.py`) | 0.931 → **0.942**; worst case 0.536 → 0.664; gap to best possible selection 0.016 → 0.005 |
+| Losses | skewed lognormal 1.000 → 0.997, blobs + category 1.000 → 0.999 |
+| Test | `test_shape_rule_switches_to_mixture_only_when_clusters_are_not_round` (switches on elongated clusters, not on round ones) |

@@ -145,7 +145,7 @@ with known answers), each run through `main.py` as a separate process with a har
 ```
 load (io_contract) → profile + column roles (profiling) → prepare two views (preprocess)
    → classification / regression: relevance filter, CV model search, greedy ensemble, decision tuning
-   → clustering: 5 methods, the most stable on 80% subsamples is chosen
+   → clustering: 5 methods, the most stable on 80% subsamples is chosen, unless BIC rejects round clusters
    → predictions.csv + profile.json
 ```
 
@@ -228,7 +228,8 @@ unequal-density, imbalanced and non-convex shapes; mixed categorical data with m
 | Gaussian mixture only | 0.80 |
 | spectral only | 0.82 |
 | stability within 0.03 + consensus tie-break (round 1) | 0.89–0.91 (16 sets); 0.914 (34 sets) |
-| **highest stability (used)** | **0.931 (34 sets)** |
+| highest stability (round 2) | 0.931 (34 sets) |
+| **highest stability + BIC shape switch (used)** | **0.942 (34 sets); 0.911 → 0.929 on 12 unseen validation sets** |
 | best possible choice (oracle) | 0.94 |
 
 * Methods: k-means, Ward agglomerative, spectral (k-NN graph), Gaussian mixture with covariance type
@@ -240,6 +241,12 @@ unequal-density, imbalanced and non-convex shapes; mixed categorical data with m
   tie-break, chosen on 16 datasets in round 1, scored 0.914 against 0.931 for the plain rule on the larger
   34-dataset benchmark (`tools/clu_bench.py`), so it was removed. A held-out Gaussian-likelihood criterion
   was also tested and rejected (0.873 alone, 0.927 combined); see `EXPERIMENTS.md`.
+* **Shape check (k-means vs Gaussian mixture)**: a method can be *stable because it is consistently wrong*:
+  k-means and spectral clustering impose round, equal-size clusters, and on elongated or overlapping
+  groups (iris-like data) they find the same wrong split every time. The Gaussian mixture compares cluster
+  shapes by BIC; when BIC prefers non-round clusters by at least 0.2 per row and the mixture's stability is
+  within 0.08 of the top, the mixture is chosen. Tuned on 34 datasets (0.931 → 0.942), then checked on 12
+  validation datasets never used for tuning (0.911 → 0.929, none worse). Iris + noise columns: 0.536 → 0.922.
 * Big tables: selection runs on 2,500 sampled rows. k-means / mixtures are then refit on all rows,
   and graph / hierarchical labels are spread to all rows with k-NN.
 * Train and test rows are clustered together; exactly k groups are always requested.
