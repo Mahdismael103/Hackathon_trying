@@ -22,7 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
 
 from . import config
-from .metrics import classification_score, regression_score
+from .metrics import best_binary_macro_f1, classification_score, regression_score, tuned_classification_score
 
 warnings.filterwarnings("ignore")
 RS = config.RANDOM_STATE
@@ -226,7 +226,9 @@ def _proba_full(model, X, n_classes):
 
 
 def _splits(y, task, n):
-    k = 5 if n <= 2000 else 3
+    if n < 4:
+        raise ValueError(f"only {n} labelled rows: too few to fit and validate a model")
+    k = min(5 if n <= 2000 else 3, n // 2)
     if task == "classification":
         counts = np.bincount(y)
         m = counts[counts > 0].min()
@@ -276,11 +278,16 @@ def tune_decision(proba, y, metric, priors):
         if s > best[1] + 1e-6:
             best = (("prior", a), s)
     if proba.shape[1] == 2:
-        for t in np.arange(0.05, 0.951, 0.01):
-            pred = (proba[:, 1] >= t).astype(int)
-            s = classification_score(metric, y, proba, pred)
-            if s > best[1] + 1e-6:
-                best = (("threshold", float(t)), s)
+        if metric == "f1_macro":
+            f1, t = best_binary_macro_f1(y, proba[:, 1])   # exact optimum over all thresholds
+            if f1 > best[1] + 1e-6:
+                best = (("threshold", t), f1)
+        else:
+            for t in np.arange(0.05, 0.951, 0.01):
+                pred = (proba[:, 1] >= t).astype(int)
+                s = classification_score(metric, y, proba, pred)
+                if s > best[1] + 1e-6:
+                    best = (("threshold", float(t)), s)
     return best
 
 
@@ -333,7 +340,10 @@ def solve_supervised(task, views_train, views_test, y_raw, metric, deadline, sea
 
     if task == "classification":
         cands = classification_candidates(n, Xtr_lin.shape[1], cat_mask, imbalanced, n_classes)
-        score_fn = lambda p: classification_score(metric, ys, p)
+        # score every candidate at the decision rule it will be used with (best threshold / prior
+        # correction for macro-F1): with argmax, an imbalanced target makes well-calibrated models look
+        # bad and over-confident ones look good, so the wrong model was being selected
+        score_fn = lambda p: tuned_classification_score(metric, ys, p, priors)
     else:
         cands = regression_candidates(n, Xtr_lin.shape[1], cat_mask, ys)
         score_fn = lambda p: regression_score(metric, ys, p)
@@ -359,7 +369,7 @@ def solve_supervised(task, views_train, views_test, y_raw, metric, deadline, sea
     oofs, fit_times, scores, skipped, adjusted = {}, {}, {}, {}, {}
     search_deadline = search_deadline or deadline
     best_ens, stall = -np.inf, 0
-    for ci, (name, view, make) in enumerate(cands):
+    for name, view, make in cands:
         # converged: the ensemble stopped improving for several candidates in a row (speed points)
         # (small tables have noisy CV and cheap models, so they get more patience)
         patience = config.SEARCH_PATIENCE + (2 if n < 1000 else 0)

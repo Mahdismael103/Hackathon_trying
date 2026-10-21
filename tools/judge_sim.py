@@ -266,10 +266,10 @@ REG = [r1_house, r2_bike, r3_friedman, r4_diabetes, r5_sparse_linear, r6_lognorm
 CLU = [k1_mall, k2_iris_noise, k3_wine, k4_blobs_cat, k5_aniso, k6_groups_with_noise]
 
 
-def build():
+def build(seed_base=910_000):
     cases = []
     for i, f in enumerate(CLS + REG):
-        rng = R(910_000 + i)                       # seeds never used during development
+        rng = R(seed_base + i)                      # seeds never used during development
         X, y, truth = f(rng)
         task = "classification" if f in CLS else "regression"
         if task == "classification":
@@ -284,7 +284,7 @@ def build():
         (d / "meta.json").write_text(json.dumps({"task": task, "target": "target"}))
         cases.append((f.__name__, task, d, np.asarray(y)[te], np.asarray(y)[tr], truth))
     for i, f in enumerate(CLU):
-        rng = R(920_000 + i)
+        rng = R(seed_base + 10_000 + i)
         X, y, k, truth = f(rng)
         d = BASE / "data" / f.__name__
         shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
@@ -311,15 +311,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--main", default=str(ROOT / "main.py"))
     ap.add_argument("--python", default=sys.executable)
+    ap.add_argument("--seed", type=int, default=910_000,
+                    help="dataset seed base: 910000 = development set, 950000 = held-out set")
+    ap.add_argument("--tag", help="save the per-dataset table to outputs/judge_<tag>.csv")
     a = ap.parse_args()
     rows = []
-    for name, task, d, ytrue, ytrain, truth in build():
+    for name, task, d, ytrue, ytrain, truth in build(a.seed):
         out = BASE / "out" / name
         shutil.rmtree(out, ignore_errors=True)
         t0 = time.time()
         try:
-            p = subprocess.run([a.python, a.main, "--data", str(d), "--output", str(out)],
-                               capture_output=True, text=True, timeout=60)
+            subprocess.run([a.python, a.main, "--data", str(d), "--output", str(out)],
+                           capture_output=True, text=True, timeout=60, check=False)
             killed = False
         except subprocess.TimeoutExpired:
             killed = True
@@ -355,6 +358,9 @@ def main():
     print("\nquality per task:", {k: round(v, 4) for k, v in per_task.items()})
     print(f"failures (no valid output): {int(df['status'].str.startswith('NO VALID').sum())}   "
           f"killed at 60 s: {int(df['killed_at_60s'].sum())}   slowest: {df['seconds'].max()} s")
+    if a.tag:
+        (ROOT / "outputs").mkdir(exist_ok=True)
+        df.to_csv(ROOT / "outputs" / f"judge_{a.tag}.csv", index=False)
     print(f"\nSIMULATED SCORE  quality {q_pts:.1f}/85  +  profiling {p_pts:.1f}/10  +  speed {s_pts:.1f}/5"
           f"  =  {q_pts + p_pts + s_pts:.1f}/100")
 

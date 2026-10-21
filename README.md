@@ -95,6 +95,7 @@ uses common key names (`column_types`, `missing_values`, `class_distribution`, `
 
 ```bash
 python tools/smoke_test.py           # ~30 s: one dataset per task, checks outputs, quality and time
+python -m pip install -r requirements-dev.txt && python -m pytest tests -q   # 21 unit + robustness tests (~45 s)
 python tools/make_practice_data.py   # 40 practice datasets in practice/ (+ hidden labels in practice_solutions/)
 python tools/check.py                # runs main.py on each like the assessment agent; times and scores it
 python tools/check.py --only clustering --tag mytest      # one task family, results saved to outputs/
@@ -129,15 +130,15 @@ virtual environment passes the smoke test.
 ### Simulated assessment (`tools/judge_sim.py`)
 
 18 datasets never seen during development (6 per task, Kaggle-style plus the brief's variations injected
-with known answers), each run through `main.py` from a fresh clone of this repository in a clean virtual
-environment, with a hard kill at 60 s:
+with known answers), each run through `main.py` as a separate process with a hard kill at 60 s. A second,
+**held-out** set of 18 (`--seed 950000`) was only measured before and after the last round of changes:
 
-| | Result |
-|---|---|
-| Valid outputs | 18/18, none killed, slowest 16 s |
-| Classification macro-F1 / regression R² / clustering ARI | 0.84 / 0.83 / 0.93 |
-| Profile: injected variations reported correctly | 18/18 datasets |
-| Score with the brief's weights (approximation, official formula unpublished) | quality 73.9/85 + profiling 10.0/10 + speed 4.1/5 ≈ **88/100** |
+| | Development set | Held-out set |
+|---|---|---|
+| Valid outputs / killed at 60 s | 18/18 / 0 | 18/18 / 0 |
+| Classification macro-F1 / regression R² / clustering ARI | 0.852 / 0.832 / 0.933 | 0.868 / 0.844 / 0.955 |
+| Profile variations reported correctly | 18/18 | 17/18 |
+| Score with the brief's weights (approximation; official formula unpublished) | **88.5/100** | **89.8/100** |
 
 ## Approach
 
@@ -172,8 +173,12 @@ load (io_contract) → profile + column roles (profiling) → prepare two views 
 
 ### 2. Preparation (`automl/preprocess.py`)
 Fitted on training rows only. Two views:
-* **Reading**: blank cells and the UCI marker `?` are missing values; columns that are numeric apart
-  from those markers stay numeric.
+* **Reading**: file encoding is detected (UTF-8, UTF-8 with byte-order mark, or Windows-1252/Latin-1 as
+  written by Excel); column names are trimmed; blank cells and the UCI marker `?` are missing values;
+  columns that are numeric apart from those markers stay numeric. Infinite or text-number values in a
+  regression target are cleaned; rows without a usable label are removed and counted in the profile.
+* **Safety**: file names taken from the metadata must stay inside the dataset folder (`../` paths and
+  absolute paths are ignored).
 * **Dates**: year, month, day, weekday, hour, day-of-year, weekend and elapsed time, plus cyclical
   sin/cos of hour, weekday and month (so 23:00 is next to 00:00 for linear and distance models).
 * **Tree view**: raw numbers with NaN kept (handled natively), categoricals as ordinal codes;
@@ -197,8 +202,12 @@ Fitted on training rows only. Two views:
   above 30k rows are subsampled for the search; the final model is refit on all rows, or on the
   selection sample when the time left is too short for a full refit.
 * **Greedy ensemble selection** (Caruana) over out-of-fold predictions.
-* **Decision tuning** for imbalanced metrics: threshold search (binary) or prior correction
-  (multiclass) chosen on out-of-fold predictions.
+* **Decision-aware model selection**: for macro-F1, every candidate and every ensemble step is scored at
+  its *best* decision rule (exact optimal threshold for binary targets, found in one sorted pass;
+  prior correction for multiclass) rather than at argmax. With argmax, imbalanced targets made
+  well-calibrated models look bad and over-confident ones look good. Telco-style churn (11% positives):
+  F1 0.570 → 0.620, against a best possible 0.628 from the true probabilities.
+* **Decision tuning**: the chosen rule (threshold or prior correction) is applied to the final predictions.
 * **Time control:** candidates are aborted when their projected CV time would exceed the budget, the
   search **stops once 3 candidates in a row fail to improve the ensemble** (5 on tables under 1,000 rows,
   where CV is noisy and models are cheap), new candidates stop after ~22 s, but the search always gets at
@@ -271,8 +280,9 @@ automl/preprocess.py    tree view, linear view, out-of-fold target encoding
 automl/supervised.py    classification / regression search and ensembling
 automl/clustering.py    stability-based clustering selection
 automl/metrics.py       scoring helpers
-tools/                  smoke test, practice-data generator, local checker, stress tests, clustering research
+tests/                  pytest suite: component unit tests and hostile-input robustness tests
+tools/                  smoke test, practice-data generator, local checker, stress tests, judge simulation, research
 REVIEW.md               engineering / ML / judge review and what was changed
 EXPERIMENTS.md          optimisation council: baseline, plan, every experiment with its measured result
-requirements.txt        pinned dependencies
+requirements.txt        pinned dependencies (requirements-dev.txt: pytest, ruff)
 ```

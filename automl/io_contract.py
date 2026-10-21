@@ -73,6 +73,23 @@ class TaskSpec:
 
 
 # ----------------------------------------------------------------------------------- reading
+def _detect_encoding(path: Path) -> str:
+    """UTF-8 (with or without byte-order mark) when the file decodes as such, else Windows-1252.
+
+    cp1252 decodes nearly every byte and is what Excel writes on European systems (Latin-1 superset)."""
+    with open(path, "rb") as f:
+        head = f.read(4_000_000)
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    try:
+        head.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError as e:
+        if e.start >= len(head) - 4:   # cut inside a multi-byte character at the 4 MB boundary
+            return "utf-8"
+        return "cp1252"
+
+
 def read_table(path: str | Path) -> pd.DataFrame:
     path = Path(path)
     ext = path.suffix.lower()
@@ -81,9 +98,11 @@ def read_table(path: str | Path) -> pd.DataFrame:
     if ext == ".json":
         return pd.read_json(path)
     sep = "\t" if ext == ".tsv" else ","
-    df = pd.read_csv(path, sep=sep, low_memory=False, skipinitialspace=True)
+    enc = _detect_encoding(path)
+    df = pd.read_csv(path, sep=sep, low_memory=False, skipinitialspace=True, encoding=enc)
     if df.shape[1] == 1 and ";" in str(df.columns[0]):
-        df = pd.read_csv(path, sep=";", low_memory=False, skipinitialspace=True)
+        df = pd.read_csv(path, sep=";", low_memory=False, skipinitialspace=True, encoding=enc)
+    df.columns = [str(c).strip() for c in df.columns]
     # Whitespace-only cells (e.g. Telco "TotalCharges") and the UCI marker "?" are missing values.
     for c in df.columns:
         if df[c].dtype == object:
@@ -218,8 +237,11 @@ def load_task(data: str | None = None, train: str | None = None, test: str | Non
         if cli_value:
             return Path(cli_value)
         v = _get(meta_dict, key)
-        if isinstance(v, str) and base is not None and (base / v).exists():
-            return base / v
+        if isinstance(v, str) and base is not None:
+            cand = (base / v).resolve()
+            # metadata may only name files inside the dataset folder (no "../" or absolute paths)
+            if cand.is_file() and cand.is_relative_to(base.resolve()):
+                return cand
         return tables.get(key)
 
     train_path = resolve(train, "train")

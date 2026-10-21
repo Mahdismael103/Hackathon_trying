@@ -1,7 +1,6 @@
 """End-to-end orchestration: load -> profile -> prepare -> model -> write outputs."""
 from __future__ import annotations
 
-import os
 import re
 import sys
 import time
@@ -197,8 +196,12 @@ def solve(spec: TaskSpec, out_dir: str, t0: float | None = None, time_limit: flo
     train = spec.train
     missing_target = 0
     if task != "clustering":
-        missing_target = int(train[spec.target].isna().sum())
-        train = train[train[spec.target].notna()].reset_index(drop=True)
+        target = train[spec.target]
+        if task == "regression":
+            target = to_numeric(target).replace([np.inf, -np.inf], np.nan)   # text numbers, infinities
+            train = train.assign(**{spec.target: target})
+        missing_target = int(target.isna().sum())
+        train = train[target.notna()].reset_index(drop=True)
     pred_frame = spec.test if spec.test is not None else train
     if not spec.id_column:
         spec.id_column = _detect_id_column(train, pred_frame, spec.target)
@@ -207,9 +210,9 @@ def solve(spec: TaskSpec, out_dir: str, t0: float | None = None, time_limit: flo
     # ---------------------------------------------------------------- fallback output first
     if task == "classification":
         y = _clean_class_target(train[spec.target])
-        fallback = np.repeat(y.mode().iloc[0], len(pred_frame))
+        fallback = np.repeat(y.mode().iloc[0] if len(y) else 0, len(pred_frame))
     elif task == "regression":
-        fallback = np.repeat(float(to_numeric(train[spec.target]).median()), len(pred_frame))
+        fallback = np.repeat(float(train[spec.target].median()) if len(train) else 0.0, len(pred_frame))
     else:
         fallback = np.zeros(len(pred_frame), dtype=int)
     write_predictions(out_dir, ids, fallback, id_name)
