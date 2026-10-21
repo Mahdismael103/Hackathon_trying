@@ -192,7 +192,8 @@ Fitted on training rows only. Two views:
   model then uses the strongest 150. A 1,000-column test went from a time-out (F1 0.33) to F1 0.91–0.93 in 25–30 s.
 
 ### 3. Supervised models (`automl/supervised.py`)
-* Candidates, cheapest first: Logistic/Ridge regression (+ log target), k-NN (two neighbourhood sizes),
+* Candidates, cheapest first: Logistic/Ridge regression (+ log target), **pairwise-interaction ridge**
+  (raw and log target, tables up to 40 prepared columns), k-NN (two neighbourhood sizes),
   RBF SVM / SVR at two strengths (n ≤ 4000; the strong SVM skips sklearn's internal probability
   calibration on tables over 2,500 rows, which is 2.6× faster with identical predictions),
   then HistGradientBoosting (default, class-balanced and deeper variants, log-target variant for

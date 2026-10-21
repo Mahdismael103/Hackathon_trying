@@ -135,3 +135,26 @@ rule tried that fixes it loses more elsewhere.
 | Real pipeline (`tools/clu_bench.py`) | 0.931 → **0.942**; worst case 0.536 → 0.664; gap to best possible selection 0.016 → 0.005 |
 | Losses | skewed lognormal 1.000 → 0.997, blobs + category 1.000 → 0.999 |
 | Test | `test_shape_rule_switches_to_mixture_only_when_clusters_are_not_round` (switches on elongated clusters, not on round ones) |
+
+## Round 4: expert judgement on lost points (5 judge experiments, 90 unseen datasets)
+
+| Where points were lost | Points | Recoverable |
+|---|---|---|
+| Regression quality | 4.6 | skewed target 0.655 vs best possible 0.830 (true formula) |
+| Classification quality | 4.0 | mostly not (Telco at its ceiling, noisy imbalanced 3-class) |
+| Clustering quality | 2.2 | mostly a generated dataset with no group structure (every method ARI 0.004) |
+| Speed / profiling | 0.7 / 0.06 | little |
+
+Root cause: no model represents feature *interactions* smoothly (linear models cannot, trees approximate them
+in steps, RBF kernels flatten extremes). Change: pairwise-interaction ridge (`ridge_poly`, `ridge_log_poly`),
+selected by cross-validation like every other candidate.
+
+| Version | Classification | Regression | Clustering | Quality pts | Total (approx.) |
+|---|---|---|---|---|---|
+| Before (5 experiments) | 0.859 | 0.836 | 0.923 | 74.19 | 88.40 |
+| **After** | 0.860 | **0.856** | 0.923 | **74.77** | 88.54 |
+
+Skewed target 0.655 → 0.767; house prices 0.906 → 0.911; practice regression 0.8661 → 0.8726.
+A classification counterpart (`logreg_poly`) gave no consistent gain (−0.001 / +0.001) and cost time: removed.
+Speed points fell 4.27 → 3.83, but unchanged classification code ran 1.76× slower in the same run (machine
+load), and regression slowed by the same factor, so the speed difference is environmental, not the change.

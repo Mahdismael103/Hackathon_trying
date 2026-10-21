@@ -125,6 +125,11 @@ def regression_candidates(n, d_lin, cat_mask, y):
     if log_ok:
         c.append(("ridge_log", "linear", lambda: TransformedTargetRegressor(
             RidgeCV(alphas=np.logspace(-3, 3, 13)), func=np.log1p, inverse_func=_safe_expm1)))
+    if d_lin <= POLY_MAX_COLUMNS and n <= 50000:
+        c.append(("ridge_poly", "linear", lambda: _poly(RidgeCV(alphas=np.logspace(-2, 4, 13)))))
+        if log_ok:
+            c.append(("ridge_log_poly", "linear", lambda: TransformedTargetRegressor(
+                _poly(RidgeCV(alphas=np.logspace(-2, 4, 13))), func=np.log1p, inverse_func=_safe_expm1)))
     if n <= 20000 and d_lin <= 200:
         k = int(np.clip(np.sqrt(n) / 2, 5, 25))
         c.append(("knn", "linear", lambda: KNeighborsRegressor(n_neighbors=k, weights="distance")))
@@ -150,6 +155,17 @@ def regression_candidates(n, d_lin, cat_mask, y):
     ]
     c.append(("hgb_deep", "tree", lambda: HistGradientBoostingRegressor(**_hgb_params(n, cat_mask, deep=True))))
     return c
+
+
+POLY_MAX_COLUMNS = 40   # pairwise products: 40 columns -> 860 features, still fast for linear models
+
+
+def _poly(model):
+    """Linear model on all pairwise products of the (standardised) linear view: captures interactions
+    such as quality x area that plain linear models cannot represent and trees only approximate."""
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import PolynomialFeatures
+    return make_pipeline(PolynomialFeatures(2, include_bias=False), StandardScaler(), model)
 
 
 def _forest_size(n):
