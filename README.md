@@ -95,7 +95,7 @@ uses common key names (`column_types`, `missing_values`, `class_distribution`, `
 
 ```bash
 python tools/smoke_test.py           # ~30 s: one dataset per task, checks outputs, quality and time
-python -m pip install -r requirements-dev.txt && python -m pytest tests -q   # 21 unit + robustness tests (~45 s)
+python -m pip install -r requirements-dev.txt && python -m pytest tests -q   # 26 tests (~1-4 min)
 python tools/make_practice_data.py   # 40 practice datasets in practice/ (+ hidden labels in practice_solutions/)
 python tools/check.py                # runs main.py on each like the assessment agent; times and scores it
 python tools/check.py --only clustering --tag mytest      # one task family, results saved to outputs/
@@ -113,7 +113,7 @@ on an i7-12700H laptop; times include the ~4 s Python start-up.
 |---|---|---|---|
 | Classification (10) | macro-F1 | 0.878 | **0.888** |
 | Regression (9) | R² | 0.833 | **0.866** |
-| Clustering (21) | ARI | 0.773 | **0.913** |
+| Clustering (21) | ARI | 0.773 | **0.937** |
 | Slowest dataset | seconds | 44.5 | **27** |
 
 Largest gains: iris clustering 0.62 → 0.90, anisotropic clusters 0.61 → 1.00, mall customers with
@@ -145,7 +145,7 @@ with known answers), each run through `main.py` as a separate process with a har
 ```
 load (io_contract) → profile + column roles (profiling) → prepare two views (preprocess)
    → classification / regression: relevance filter, CV model search, greedy ensemble, decision tuning
-   → clustering: 5 methods, chosen by subsample stability with a consensus tie-break
+   → clustering: 5 methods, the most stable on 80% subsamples is chosen
    → predictions.csv + profile.json
 ```
 
@@ -227,7 +227,8 @@ unequal-density, imbalanced and non-convex shapes; mixed categorical data with m
 | k-means only / Ward only | 0.73 / 0.74 |
 | Gaussian mixture only | 0.80 |
 | spectral only | 0.82 |
-| **stability + consensus tie-break (used)** | **0.89–0.91** |
+| stability within 0.03 + consensus tie-break (round 1) | 0.89–0.91 (16 sets); 0.914 (34 sets) |
+| **highest stability (used)** | **0.931 (34 sets)** |
 | best possible choice (oracle) | 0.94 |
 
 * Methods: k-means, Ward agglomerative, spectral (k-NN graph), Gaussian mixture with covariance type
@@ -235,7 +236,10 @@ unequal-density, imbalanced and non-convex shapes; mixed categorical data with m
   see continuous columns, because one-hot indicators make their covariances collapse.
 * **Stability**: every method is refit on random 80% subsamples. Its score is the agreement (ARI) with
   its own labels on the shared rows. Methods that find real structure are stable.
-* Among methods within 0.03 of the most stable, the one agreeing most with the others wins.
+* The most stable method wins (consensus only breaks exact ties). A 0.03 tie margin with a consensus
+  tie-break, chosen on 16 datasets in round 1, scored 0.914 against 0.931 for the plain rule on the larger
+  34-dataset benchmark (`tools/clu_bench.py`), so it was removed. A held-out Gaussian-likelihood criterion
+  was also tested and rejected (0.873 alone, 0.927 combined); see `EXPERIMENTS.md`.
 * Big tables: selection runs on 2,500 sampled rows. k-means / mixtures are then refit on all rows,
   and graph / hierarchical labels are spread to all rows with k-NN.
 * Train and test rows are clustered together; exactly k groups are always requested.
@@ -280,7 +284,7 @@ automl/preprocess.py    tree view, linear view, out-of-fold target encoding
 automl/supervised.py    classification / regression search and ensembling
 automl/clustering.py    stability-based clustering selection
 automl/metrics.py       scoring helpers
-tests/                  pytest suite: component unit tests and hostile-input robustness tests
+tests/                  pytest suite: components, hostile inputs, watchdog / safety nets, selection logic
 tools/                  smoke test, practice-data generator, local checker, stress tests, judge simulation, research
 REVIEW.md               engineering / ML / judge review and what was changed
 EXPERIMENTS.md          optimisation council: baseline, plan, every experiment with its measured result

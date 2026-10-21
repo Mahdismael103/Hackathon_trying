@@ -35,7 +35,10 @@ RS = config.RANDOM_STATE
 SELECTION_SAMPLE = 2500
 STABILITY_REPS = 3
 STABILITY_FRAC = 0.8
-TIE_TOLERANCE = 0.03
+# Highest stability wins. A 0.03 tie margin with a consensus tie-break was used before; on the
+# 34-dataset benchmark (tools/clu_bench.py) it scored 0.914 mean ARI against 0.931 for the plain
+# rule (see EXPERIMENTS.md, round 2), so ties are now only exact ties.
+TIE_TOLERANCE = 0.0
 
 
 class _Method:
@@ -105,7 +108,8 @@ def _stability(method, Z, base, rng, deadline):
     return float(np.mean(scores)) if scores else 0.0
 
 
-def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mask=None, on_interim=None):
+def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mask=None, on_interim=None,
+                     return_candidates=False):
     t_start = time.time()
     n, d = X.shape
     k = int(max(1, min(k, n)))
@@ -182,7 +186,7 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
     remap[order] = np.arange(len(order))
     final = remap[final]
     report = {
-        "selection_criterion": "stability (subsample ARI) with consensus tie-break",
+        "selection_criterion": "highest stability (subsample ARI); consensus breaks exact ties",
         "chosen": best,
         "stability": {p: round(s, 5) for p, s in stab.items()},
         "consensus": {p: round(c, 5) for p, c in cons.items()},
@@ -193,5 +197,8 @@ def solve_clustering(X, k, deadline, log=print, onehot_columns=0, continuous_mas
         "method_seconds": secs,
         "clustering_seconds": round(time.time() - t_start, 3),
     }
-    return dict(labels=final, report=report)
+    out = dict(labels=final, report=report)
+    if return_candidates and len(sample) == n:   # benchmark hook: every candidate's labels on all rows
+        out["candidates"] = labels
+    return out
 

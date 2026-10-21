@@ -90,3 +90,35 @@
 
 **Not verified:** the official input/output contract, metric and checker (released at kickoff), and the
 organisers' CPU.
+
+## Round 2 (critical re-examination)
+
+Benchmarks: 3 judge-simulation sets (18 datasets each, seeds 910000 / 950000 / 970000), the 34-dataset
+clustering benchmark (`tools/clu_bench.py`: research suite + judge clustering cases of all 3 seeds),
+the 40 practice datasets, and the pytest suite.
+
+| # | Weakness found | Evidence | Change | Measured result | Decision |
+|---|---|---|---|---|---|
+| R2-1 | Clustering selection was the least stable part: same dataset type 0.54–0.92 ARI across seeds | 34-dataset benchmark: chosen 0.914 vs best available candidate 0.947 | Diagnosed: the right candidate was usually *present* but not chosen; the 0.03 tie margin + consensus tie-break (added in round 1 on only 16 datasets) picked near-ties at random | Rule study (`tools/clu_rules2.py`), same candidates re-ranked: highest stability 0.931, round-1 rule 0.914, new held-out Gaussian likelihood 0.873 alone / 0.927 combined | **Plain highest stability adopted** (0.914 → 0.931 confirmed in the real pipeline). Likelihood criterion rejected and removed from the program |
+| R2-2 | Relevance view (noise columns removed for k-NN / SVM) is selected on all training rows before CV: selection leakage, optimistic CV | Theory | Experiment: view switched off, 36 supervised judge datasets | Without the view: worse on 18, better on 3, mean −0.007 | **Kept the view**; the leak's effect is smaller than the noise-removal benefit |
+| R2-3 | No hang protection for the test suite (one unattended run took 1 h 46 min); fast-metric correctness and safety nets only checked by one-off scripts; new clustering rule not pinned | Code review | `tests/conftest.py` hang guard (faulthandler, 180 s, dumps stacks); `tests/test_safety_and_selection.py`: fast F1 vs sklearn, exact threshold vs brute force (ties), stability rule, watchdog with all models hung, clustering hang | 26/26 pass. The watchdog tests verify a hung run stops in about 17 s with a real linear / quick k-means answer saved | Kept |
+| R2-4 | Log-target models predict the median, not the mean (biased under RMSE) | Theory | Measured with known true means on the skewed-target sets | Median vs mean prediction R² 0.811 vs 0.813: negligible at this noise level | **Not implemented** (no measurable value) |
+| R2-5 | Skewed target, development seed: R² 0.62 against a best possible 0.81 | One extreme test value (87.5, training max 52.4); the chosen raw-scale SVMs predicted 22.8 | Added `svr_log`: SVM on the log scale for skewed non-negative targets | Won CV on one set and was chosen, but held-out R² 0.759 → 0.749; no change elsewhere; practice regression identical (0.8662) | **Reverted** (no held-out gain) |
+
+| R2-6 | Full re-measurement after R2-1 (3 judge sets, 54 datasets) | Same code as round 1 except clustering rule | – | Clustering 0.927 → 0.930 (groups with noise 0.934 → 0.979, mall 0.990 → 1.000); classification and regression unchanged; 0 failures | Kept |
+
+**Measurement caveat**: the laptop was at 60–100% CPU from other programs during several runs (slowest run 40 s
+in one set, 23 s in calmer runs), so speed points differ by up to 0.9 between runs of identical code.
+
+### Round 2 final verification (code as committed)
+
+| Check | Result |
+|---|---|
+| pytest | 26/26 (incl. watchdog and clustering-hang tests) |
+| 40 practice datasets | 0 failures; F1 0.8865, R² 0.8663, **ARI 0.9368** (round 1: 0.9127; moons 0.515 → 1.000, mixed categorical 0.749 → 0.836, breast cancer 0.749 → 0.678) |
+| Stress suites | 11/11, 6/6, 5/5; slowest 37 s (100k-row clustering now selects spectral; machine under load) |
+| Smoke test | pass |
+
+**Remaining bottleneck**: clustering cases where a wrong partition is *stable* (iris + noise columns on seed
+970000: 0.54 while a 0.92 candidate exists). Neither stability nor held-out likelihood identifies it; every
+rule tried that fixes it loses more elsewhere.
